@@ -1,6 +1,8 @@
 package com.example.spisok
 
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -28,7 +30,11 @@ import com.example.spisok.ui.screens.SettingsScreen
 import com.example.spisok.ui.screens.TemplatesScreen
 import com.example.spisok.ui.theme.SpisokTheme
 import com.example.spisok.notifications.NotificationScheduler
+import com.example.spisok.firebase.FirebaseService
+import com.example.spisok.ui.components.AuthDialog
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.onEach
 import java.util.UUID
 
 /**
@@ -60,6 +66,7 @@ fun ProductListsApp() {
     val context = LocalContext.current
     val dataRepository = remember { DataRepository(context) }
     val notificationScheduler = remember { NotificationScheduler(context) }
+    val firebaseService = remember { FirebaseService() }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     
@@ -96,8 +103,77 @@ fun ProductListsApp() {
         mutableStateOf<List<Template>>(dataRepository.loadTemplates())
     }
     
+    // Состояние авторизации
+    var isAuthenticated by remember { 
+        mutableStateOf(firebaseService.getCurrentUserId() != null)
+    }
+    var showAuthDialog by remember { mutableStateOf(!isAuthenticated) }
+    var isSignUp by remember { mutableStateOf(false) }
+    
     // Состояние для диалога создания списка
     var showCreateDialog by remember { mutableStateOf(false) }
+    
+    // Авторизация при первом запуске
+    LaunchedEffect(Unit) {
+        if (!isAuthenticated) {
+            val result = firebaseService.signInAnonymously()
+            result.onSuccess { userId ->
+                Log.d("MainActivity", "Авторизация успешна. User ID: $userId")
+                isAuthenticated = true
+                showAuthDialog = false
+            }.onFailure { error ->
+                Log.e("MainActivity", "Ошибка авторизации: ${error.message}", error)
+                // Оставляем диалог авторизации открытым
+            }
+        }
+    }
+    
+    // Получаем списки, отправленные для текущего пользователя
+    LaunchedEffect(isAuthenticated) {
+        if (isAuthenticated) {
+            Log.d("MainActivity", "Начинаем получать shared lists")
+            firebaseService.getSharedLists()
+                .onEach { sharedLists ->
+                    Log.d("MainActivity", "Получено ${sharedLists.size} shared lists")
+                    // Добавляем новые списки, которых еще нет
+                    sharedLists.forEach { sharedList ->
+                        if (productLists.none { it.id == sharedList.id }) {
+                            Log.d("MainActivity", "Добавляем новый список: ${sharedList.name} (${sharedList.id})")
+                            
+                            // Создаем категории из полученного списка и обновляем ID товаров
+                            val updatedItems = sharedList.items.map { item ->
+                                if (item.category.isNotBlank()) {
+                                    // Ищем категорию по имени (в новом формате category содержит название)
+                                    val existingCategory = categories.find { it.name == item.category }
+                                    
+                                    if (existingCategory != null) {
+                                        // Категория уже есть, используем её ID
+                                        item.copy(category = existingCategory.id)
+                                    } else {
+                                        // Категории нет, создаем новую
+                                        val newCategory = Category(
+                                            id = UUID.randomUUID().toString(),
+                                            name = item.category
+                                        )
+                                        categories = categories + newCategory
+                                        Log.d("MainActivity", "Создана новая категория: ${item.category} (${newCategory.id})")
+                                        item.copy(category = newCategory.id)
+                                    }
+                                } else {
+                                    item
+                                }
+                            }
+                            
+                            val updatedList = sharedList.copy(items = updatedItems)
+                            productLists = productLists + updatedList
+                        } else {
+                            Log.d("MainActivity", "Список ${sharedList.name} уже существует, пропускаем")
+                        }
+                    }
+                }
+                .collect()
+        }
+    }
     
     // Планируем все уведомления при первом запуске
     LaunchedEffect(Unit) {
@@ -265,6 +341,70 @@ fun ProductListsApp() {
         )
         templates = templates + newTemplate
     }
+    val onShareList = { listId: String, participantId: String ->
+        val list = productLists.find { it.id == listId }
+        if (list != null) {
+            scope.launch {
+                Log.d("MainActivity", "Отправка списка $listId участнику $participantId")
+                val result = firebaseService.shareList(list, participantId, categories)
+                result.onSuccess {
+                    Log.d("MainActivity", "Список успешно отправлен")
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        Toast.makeText(context, "Список отправлен", Toast.LENGTH_SHORT).show()
+                    }
+                }.onFailure { error ->
+                    Log.e("MainActivity", "Ошибка отправки списка: ${error.message}", error)
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        Toast.makeText(context, "Ошибка отправки: ${error.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        } else {
+            Log.w("MainActivity", "Список с ID $listId не найден")
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                Toast.makeText(context, "Список не найден", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    
+    val onSignIn = { email: String, password: String ->
+        scope.launch {
+            val result = firebaseService.signInWithEmail(email, password)
+            result.onSuccess {
+                isAuthenticated = true
+                showAuthDialog = false
+            }.onFailure { error ->
+                println("Ошибка входа: ${error.message}")
+            }
+        }
+        Unit
+    }
+    
+    val onSignUp = { email: String, password: String ->
+        scope.launch {
+            val result = firebaseService.signUpWithEmail(email, password)
+            result.onSuccess {
+                isAuthenticated = true
+                showAuthDialog = false
+            }.onFailure { error ->
+                println("Ошибка регистрации: ${error.message}")
+            }
+        }
+        Unit
+    }
+    
+    val onSignInAnonymously = {
+        scope.launch {
+            val result = firebaseService.signInAnonymously()
+            result.onSuccess {
+                isAuthenticated = true
+                showAuthDialog = false
+            }.onFailure { error ->
+                println("Ошибка анонимного входа: ${error.message}")
+            }
+        }
+        Unit
+    }
     val onAddNotification = { message: String, time: String, daysOfWeek: Set<Int> ->
         val newNotification = Notification(
             id = UUID.randomUUID().toString(),
@@ -328,7 +468,7 @@ fun ProductListsApp() {
     // Отображаем текущий экран
     when (val screen = currentScreen) {
         is Screen.ProductLists -> {
-            ProductListsScreen(
+                ProductListsScreen(
                 onMenuClick = onMenuClick,
                 onSettingsClick = onSettingsClick,
                 onCreateListClick = onCreateListClick,
@@ -355,7 +495,13 @@ fun ProductListsApp() {
                 onAddParticipant = onAddParticipant,
                 onRemoveParticipant = onRemoveParticipant,
                 onNotificationsToggle = onNotificationsToggle,
-                notificationsEnabled = notificationsEnabled
+                notificationsEnabled = notificationsEnabled,
+                currentUserId = firebaseService.getCurrentUserId() ?: "",
+                onSignOut = {
+                    firebaseService.signOut()
+                    isAuthenticated = false
+                    showAuthDialog = true
+                }
             )
         }
         is Screen.ProductListDetail -> {
@@ -365,6 +511,7 @@ fun ProductListsApp() {
                     listName = currentList.name,
                     items = currentList.items,
                     categories = categories,
+                    participants = participants,
                     onBackClick = onBackFromDetail,
                     onItemsChange = { items ->
                         onUpdateListItems(screen.listId, items)
@@ -372,6 +519,9 @@ fun ProductListsApp() {
                     onSaveAsTemplate = onSaveAsTemplate,
                     onDeleteList = {
                         onDeleteList(screen.listId)
+                    },
+                    onShareList = { participantId ->
+                        onShareList(screen.listId, participantId)
                     }
                 )
             }
@@ -403,6 +553,17 @@ fun ProductListsApp() {
                 onDeleteTemplates = onDeleteTemplates
             )
         }
+    }
+    
+    // Диалог авторизации
+    if (showAuthDialog) {
+        AuthDialog(
+            isSignUp = isSignUp,
+            onDismiss = { showAuthDialog = false },
+            onSignIn = onSignIn,
+            onSignUp = onSignUp,
+            onSignInAnonymously = onSignInAnonymously
+        )
     }
 }
 

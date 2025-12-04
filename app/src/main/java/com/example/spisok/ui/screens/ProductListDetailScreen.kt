@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,9 +23,11 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.example.spisok.data.ProductItem
 import com.example.spisok.data.Category
+import com.example.spisok.data.ProductList
 import com.example.spisok.ui.components.DeleteConfirmationDialog
 import com.example.spisok.ui.components.ProductItemRow
 import com.example.spisok.ui.components.SaveAsTemplateDialog
+import com.example.spisok.ui.components.ShareListDialog
 import com.example.spisok.ui.theme.Dimens
 import java.util.UUID
 
@@ -37,10 +40,12 @@ fun ProductListDetailScreen(
     listName: String,
     items: List<ProductItem>,
     categories: List<Category>,
+    participants: List<com.example.spisok.data.Participant>,
     onBackClick: () -> Unit,
     onItemsChange: (List<ProductItem>) -> Unit,
     onSaveAsTemplate: (String, List<ProductItem>) -> Unit = { _, _ -> },
-    onDeleteList: () -> Unit = {}
+    onDeleteList: () -> Unit = {},
+    onShareList: (String) -> Unit = {} // participantId
 ) {
     var currentItems by remember(items) { mutableStateOf(items) }
     var isDeleteMode by remember { mutableStateOf(false) }
@@ -48,6 +53,7 @@ fun ProductListDetailScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showDeleteListDialog by remember { mutableStateOf(false) }
     var showSaveTemplateDialog by remember { mutableStateOf(false) }
+    var showShareDialog by remember { mutableStateOf(false) }
     var newItemText by remember { mutableStateOf("") }
     var showCategoryDropdown by remember { mutableStateOf(false) }
 
@@ -112,6 +118,15 @@ fun ProductListDetailScreen(
                             )
                         }
                     } else {
+                        // Кнопка отправки списка
+                        IconButton(
+                            onClick = { showShareDialog = true }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Отправить список"
+                            )
+                        }
                         // Кнопка "Сохранить как шаблон"
                         IconButton(
                             onClick = { showSaveTemplateDialog = true },
@@ -346,6 +361,18 @@ fun ProductListDetailScreen(
             onConfirm = { templateName ->
                 onSaveAsTemplate(templateName, currentItems)
                 showSaveTemplateDialog = false
+            }
+        )
+    }
+    
+    // Диалог отправки списка
+    if (showShareDialog) {
+        ShareListDialog(
+            participants = participants,
+            onDismiss = { showShareDialog = false },
+            onShare = { participantId ->
+                onShareList(participantId)
+                showShareDialog = false
             }
         )
     }

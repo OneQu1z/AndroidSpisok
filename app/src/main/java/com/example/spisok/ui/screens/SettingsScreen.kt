@@ -1,14 +1,21 @@
 package com.example.spisok.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.spisok.data.Participant
 import com.example.spisok.ui.components.AddParticipantButton
@@ -27,7 +34,9 @@ fun SettingsScreen(
     onAddParticipant: (userId: String, name: String) -> Unit = { _, _ -> },
     onRemoveParticipant: (String) -> Unit = {},
     onNotificationsToggle: (Boolean) -> Unit = {},
-    notificationsEnabled: Boolean = true
+    notificationsEnabled: Boolean = true,
+    currentUserId: String = "",
+    onSignOut: () -> Unit = {}
 ) {
     var localNotificationsEnabled by remember(notificationsEnabled) { mutableStateOf(notificationsEnabled) }
     var showAddParticipantDialog by remember { mutableStateOf(false) }
@@ -114,6 +123,46 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+                    
+                    // ID текущего пользователя
+                    if (currentUserId.isNotBlank()) {
+                        val context = LocalContext.current
+                        val copyToClipboard: () -> Unit = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clip = ClipData.newPlainText("User ID", currentUserId)
+                            clipboard.setPrimaryClip(clip)
+                            Toast.makeText(context, "ID скопирован в буфер обмена", Toast.LENGTH_SHORT).show()
+                        }
+                        
+                        OutlinedTextField(
+                            value = currentUserId,
+                            onValueChange = {},
+                            label = { Text("Ваш ID пользователя") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { copyToClipboard() },
+                            readOnly = true,
+                            enabled = false,
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = copyToClipboard
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "Копировать ID"
+                                    )
+                                }
+                            }
+                        )
+                    }
+                    
+                    // Кнопка выхода
+                    OutlinedButton(
+                        onClick = onSignOut,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Выйти")
+                    }
                     
                     // Список участников
                     if (participants.isNotEmpty()) {
